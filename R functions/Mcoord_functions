@@ -1,0 +1,155 @@
+#### Only 2 means from DataFit: cancer status
+loghconst=function(delta, Omega){
+  delta/2*as.numeric(determinant(Omega, logarithm = TRUE)$modulus)-0.5*nrow(Omega)*delta*log(2)- logGamma_p(0.5*delta, p=nrow(Omega))
+}
+
+logGamma_p=function(a, p){
+  p*(p-1)/4*log(pi)+sum(lgamma(a+(1-1:p)/2))
+}
+
+####
+logdet=function(Matrix)
+{
+  o=determinant(Matrix,logarithm=T)$modulus[1]
+  return(o)
+}
+
+
+###################################################################################
+# DataFit: Estimate the adjusted mean y.tilde and covariance S.tile in (7) and (8)#
+###################################################################################
+
+DataFit=function(dat){
+  #################################################################################
+  ##  return y.tilde and S.tilde
+  ## correlation function implied by variable struc  specified at the beginning
+  #################################################################################
+  
+  Npat=nrow(dat)
+  mu.hat=vector(mode="list", 2)
+  sigma.hat=vector(mode="list", 2)
+  phidet.hat=vector(mode="list", 2)
+  r=vector(mode="list", 2)
+  om.hat=list()
+  Y.Y=list()
+  X.X=list()
+  X.Y=list()
+  
+  for (z in 1:2)
+  {
+    r.all=phidet=NULL
+    y.tilde=rep(0, p)
+    S.tilde=array(0,dim=c(p,p))
+    ##x.x=matrix(0,dim_beta,dim_beta)
+    x.x=matrix(0,dim_beta[z],dim_beta[z])
+    x.y=matrix(0,dim_beta[z],p)
+    
+    #whichX=1*((z==3)||(z==4))+2*((z==1)||(z==2))
+    for (i in 1:Npat)
+    {
+      keep=dat[[i,"cancer"]]==z-1
+      n.i=sum(keep)
+      ###################
+      if(n.i>1)
+      {
+        Y.i=as.matrix((dat[[i,2]])[keep,])
+        X.i=as.matrix(dat[[i,3]])[[z]][keep,] ###### Which X: [[z]]
+      }
+      if (n.i==1)
+      {
+        Y.i=as.matrix((dat[[i,2]])[keep,])
+        X.i=t(as.matrix(dat[[i,3]])[[z]][keep,]) #######
+      }
+      if(n.i==0){
+        y.tilde.i=rep(0, p) 
+        S.tilde.i=array(0, dim=c(p,p))
+        X.X.i=diag(0,dim_beta[z],dim_beta[z])
+        X.Y.i=matrix(0,dim_beta[z],p)
+        
+        phidet.i=NULL
+        r.i=NULL
+      }
+      if (n.i>=1)
+      {
+        y.tilde.i=colSums(Y.i)
+        S.tilde.i= t(Y.i)%*%Y.i
+        X.X.i= as.matrix(t(X.i)%*%X.i)
+        X.Y.i= t(X.i)%*%Y.i
+        phidet.i=1 
+      }
+      y.tilde=y.tilde+y.tilde.i 
+      S.tilde=S.tilde+S.tilde.i
+      x.x=x.x+X.X.i
+      x.y=x.y+X.Y.i
+      r.all=c(r.all, rep(1,n.i))	
+      phidet=c(phidet, phidet.i)
+    }
+    X.X[[z]]=x.x
+    X.Y[[z]]=x.y
+    y.tilde=y.tilde/sum(r.all)
+    beta.tilde=solve(X.X[[z]])%*%X.Y[[z]] #beta tilde
+    S.n=S.tilde-t(X.Y[[z]])%*%beta.tilde #sigma tilde
+    Y.Y[[z]]=S.tilde
+    S.tilde=S.tilde-y.tilde%*%t(y.tilde)*sum(r.all) ## for omega hat!!
+    mu.hat[z]=list(beta.tilde)
+    sigma.hat[z]=list(S.n)
+    om.hat[[z]]=S.tilde
+    phidet.hat[z]=list(phidet)
+    r[z]=list(r.all)
+  }
+  output=list(mu.hat=mu.hat, sigma.hat=sigma.hat, phidet=phidet.hat,r=r,om.hat=om.hat,X.X=X.X,X.Y=X.Y,Y.Y=Y.Y)
+  return(output)
+}
+##################################################################
+# LogPredDen: posterior predictive density
+##################################################################
+LogPredDen=function(data.train, data.pred, d, delta, omega)
+{
+  #data <- rbind(data.train, data.pred)
+  #e1=(d==1); e2=(data.pred[[1,"zone"]]==2)
+  #z1=1*e1*e2+2*e1*(1-e2)+3*(1-e1)*e2+4*(1-e1)*(1-e2)
+  #whichX=1*(1-e1)+2*e1 # for which X is used: [[whichX]]
+  #s0=ParmFit$sigma.hat[[z1]]
+  #Y=as.matrix(data.pred[1,2][[1]]) #1x4
+  #X=as.matrix(data.pred[1,3][[whichX]]) #5x1: vary w.r.t. predicted cancer status d 
+  z1=d+1
+  s0=ParmFit$sigma.hat[[z1]]
+  Y=as.matrix(data.pred[1,2][[1]]) #1x4
+  X=as.matrix(data.pred[1,3][[1]][[z1]]) #5x1: vary w.r.t. predicted cancer status d: Pay Attention!!! If use different
+  #X[[1]],X[[2]], then for test dataset you need to write mydata.test$axis in different format
+  
+  newXX=ParmFit$X.X[[z1]]+X%*%t(X)
+  newXY=ParmFit$X.Y[[z1]]+X%*%Y
+  newYY=ParmFit$Y.Y[[z1]]+t(Y)%*%Y
+  newbeta=solve(newXX)%*%newXY
+  s1=newYY-t(newXY)%*%newbeta
+  dete=solve(newXX)%*%X%*%t(X)+diag(1,dim_beta[z1],dim_beta[z1])
+  r.z=length(ParmFit$r[[z1]])  ############# old!
+  output=-p/2*(determinant(dete,logarithm=T)$modulus[1])+loghconst(delta+r.z,s0+omega[[z1]])-loghconst(delta+r.z+1,  s1+omega[[z1]]) 
+  return(output)
+}
+
+
+PRED=function(data.pred, data.train, alpha){
+  k=1
+  dec.mat=array(list(NULL), c(npat, 3))
+  logpden=apply(llist, 1, FUN=function(x){LogPredDen(data.train, data.pred[k,,drop=F], x, delta,omega=omega.hat)})
+  pden=exp(logpden-mean(logpden))
+  ##### P
+  PHAT=data.pred[[1,"paxis"]]
+  priprob=apply(llist, 1, FUN=function(x){k=sum(x==1); PHAT^k*(1-PHAT)^(n.new-k)})
+  pden=priprob*pden
+  #####
+  pden=pden/sum(pden)
+  risk=sapply(1:nrow(llist) , FUN=function(loop){
+    d=llist[loop,]
+    n.fp = apply(llist, 1,FUN=function(y){sum(d==1 & y==0)})
+    n.fn = apply(llist, 1,FUN=function(y){sum(d==0 & y==1)})
+    risk=sum((pden)*((1-alpha)*n.fn+alpha*n.fp))
+  })
+  dec.mr=as.numeric(llist[which.min(risk),])
+  dec.mat[[k,1]]=data.pred[[k,4]]
+  dec.mat[[k,2]]=dec.mr
+  dec.mat[[k,3]]=pden
+  return(dec.mat)
+}
